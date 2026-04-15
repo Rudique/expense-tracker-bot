@@ -13,16 +13,13 @@ async def main() -> None:
     engine = create_engine(settings.db_url)
     session_factory = create_session_factory(engine)
 
-    # пока просто создаем, позже будем прокидывать в handlers/middlewares
-    _ = session_factory
-
     await init_db(engine)
 
     bot = create_bot(settings.bot_token)
     dp = create_dispatcher()
     register_handlers(dp)
 
-    await dp.start_polling(bot)
+    await dp.start_polling(bot, session_factory=session_factory)
 
 
 if __name__ == "__main__":
