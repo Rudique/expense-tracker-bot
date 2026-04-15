@@ -32,5 +32,3 @@ async def cmd_start(
 
     if created:
         await message.answer(f"привет, {user.first_name or 'user'}! ты добавлен в базу")
-    else:
-        await message.answer(f"с возвращением, {user.first_name or 'user'}!!!")
