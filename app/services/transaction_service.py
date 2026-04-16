@@ -9,12 +9,13 @@ class TransactionService:
     @staticmethod
     async def create(
         session: AsyncSession,
+        user_id: int,
         amount: Decimal,
         category_id: int,
         comment: str | None,
         is_shared: bool = False,
     ) -> Transaction:
-        transaction = Transaction(amount=amount, category_id=category_id, comment=comment, is_shared=is_shared)
+        transaction = Transaction(user_id=user_id, amount=amount, category_id=category_id, comment=comment, is_shared=is_shared)
         session.add(transaction)
         await session.commit()
         await session.refresh(transaction)

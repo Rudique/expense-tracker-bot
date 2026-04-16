@@ -1,7 +1,7 @@
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 
-from aiogram import F, Router
+from aiogram import Router
 from aiogram.filters import Command
 from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models.transaction import Transaction
 from app.services.category_service import CategoryService
 from app.services.transaction_service import TransactionService
+from app.services.user_service import UserService
 
 router = Router()
 
@@ -74,14 +75,28 @@ def _comment_kb() -> InlineKeyboardMarkup:
 # ── Step 1: amount ─────────────────────────────────────────────────────────────
 
 @router.message(Command("add_transaction"))
-async def cmd_add_transaction(message: Message, state: FSMContext) -> None:
+async def cmd_add_transaction(
+    message: Message,
+    state: FSMContext,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    tg_user = message.from_user
+    async with session_factory() as session:
+        user, _ = await UserService.create_or_update_from_telegram(
+            session=session,
+            telegram_id=tg_user.id,
+            username=tg_user.username,
+            first_name=tg_user.first_name,
+            last_name=tg_user.last_name,
+        )
+
     await state.set_state(AddTransaction.waiting_amount)
     is_shared = message.chat.type != ChatType.PRIVATE
     sent = await message.answer(
         "💰 <b>How much did you spend?</b>\n\nEnter the amount:",
         reply_markup=_cancel_kb(),
     )
-    await state.update_data(prompt_msg_id=sent.message_id, is_shared=is_shared)
+    await state.update_data(prompt_msg_id=sent.message_id, is_shared=is_shared, user_id=user.id)
 
 
 @router.message(AddTransaction.waiting_amount)
@@ -112,12 +127,19 @@ async def process_amount(
     data = await state.get_data()
     await state.update_data(amount=str(amount))
     await state.set_state(AddTransaction.waiting_category)
-    await message.bot.edit_message_text(
-        chat_id=message.chat.id,
-        message_id=data["prompt_msg_id"],
-        text="📂 <b>Select a category:</b>",
-        reply_markup=_category_kb(categories),
-    )
+
+    text = "📂 <b>Select a category:</b>"
+    kb = _category_kb(categories)
+    try:
+        await message.bot.edit_message_text(
+            chat_id=message.chat.id,
+            message_id=data["prompt_msg_id"],
+            text=text,
+            reply_markup=kb,
+        )
+    except Exception:
+        sent = await message.answer(text, reply_markup=kb)
+        await state.update_data(prompt_msg_id=sent.message_id)
 
 
 # ── Step 2: category ───────────────────────────────────────────────────────────
@@ -152,62 +174,60 @@ async def process_comment(
     data = await state.get_data()
     transaction = await _save(session_factory, data, comment=message.text.strip())
     await state.clear()
-    await message.bot.edit_message_text(
-        chat_id=message.chat.id,
-        message_id=data["prompt_msg_id"],
-        text=_success_text(transaction, data["category_label"]),
-    )
+
+    text = _success_text(transaction, data["category_label"])
+    try:
+        await message.bot.edit_message_text(
+            chat_id=message.chat.id,
+            message_id=data["prompt_msg_id"],
+            text=text,
+        )
+    except Exception:
+        await message.answer(text)
 
 
 # ── Navigation ─────────────────────────────────────────────────────────────────
 
-@router.callback_query(NavCallback.filter(F.action == "cancel"))
-async def on_cancel(callback: CallbackQuery, state: FSMContext) -> None:
-    if await state.get_state() is None:
-        await callback.answer("This action is no longer available.")
-        return
-    await state.clear()
-    await callback.message.edit_text("❌ <b>Transaction cancelled.</b>")
-    await callback.answer()
-
-
-@router.callback_query(NavCallback.filter(F.action == "back"), AddTransaction.waiting_category)
-async def on_back_to_amount(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(AddTransaction.waiting_amount)
-    await callback.message.edit_text(
-        "💰 <b>How much did you spend?</b>\n\nEnter the amount:",
-        reply_markup=_cancel_kb(),
-    )
-    await callback.answer()
-
-
-@router.callback_query(NavCallback.filter(F.action == "back"), AddTransaction.waiting_comment)
-async def on_back_to_category(
+@router.callback_query(NavCallback.filter())
+async def on_nav(
     callback: CallbackQuery,
+    callback_data: NavCallback,
     state: FSMContext,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    async with session_factory() as session:
-        categories = await CategoryService.get_all(session=session)
-    await state.set_state(AddTransaction.waiting_category)
-    await callback.message.edit_text(
-        "📂 <b>Select a category:</b>",
-        reply_markup=_category_kb(categories),
-    )
-    await callback.answer()
+    await callback.answer()  # always first — stops the button spinner
 
+    action = callback_data.action
+    current_state = await state.get_state()
 
-@router.callback_query(NavCallback.filter(F.action == "skip"), AddTransaction.waiting_comment)
-async def on_skip_comment(
-    callback: CallbackQuery,
-    state: FSMContext,
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    data = await state.get_data()
-    transaction = await _save(session_factory, data, comment=None)
-    await state.clear()
-    await callback.message.edit_text(_success_text(transaction, data["category_label"]))
-    await callback.answer()
+    if action == "cancel":
+        if current_state is None:
+            return
+        await state.clear()
+        await callback.message.edit_text("❌ <b>Transaction cancelled.</b>")
+
+    elif action == "back":
+        if current_state == AddTransaction.waiting_category:
+            await state.set_state(AddTransaction.waiting_amount)
+            await callback.message.edit_text(
+                "💰 <b>How much did you spend?</b>\n\nEnter the amount:",
+                reply_markup=_cancel_kb(),
+            )
+        elif current_state == AddTransaction.waiting_comment:
+            async with session_factory() as session:
+                categories = await CategoryService.get_all(session=session)
+            await state.set_state(AddTransaction.waiting_category)
+            await callback.message.edit_text(
+                "📂 <b>Select a category:</b>",
+                reply_markup=_category_kb(categories),
+            )
+
+    elif action == "skip":
+        if current_state == AddTransaction.waiting_comment:
+            data = await state.get_data()
+            transaction = await _save(session_factory, data, comment=None)
+            await state.clear()
+            await callback.message.edit_text(_success_text(transaction, data["category_label"]))
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -220,6 +240,7 @@ async def _save(
     async with session_factory() as session:
         transaction = await TransactionService.create(
             session=session,
+            user_id=data["user_id"],
             amount=Decimal(data["amount"]),
             category_id=data["category_id"],
             comment=comment,
