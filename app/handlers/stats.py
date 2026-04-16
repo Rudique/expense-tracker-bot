@@ -45,7 +45,7 @@ async def _show_stats(
             date_from=date_from,
             date_to=date_to,
         )
-    text = stats_text(period_label, rows)
+    text = stats_text(period_label, rows, date_from, date_to)
     if edit:
         await target.edit_text(text, reply_markup=back_to_periods_kb())
     else:

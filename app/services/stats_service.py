@@ -15,6 +15,7 @@ class CategoryStats:
     name: str
     total: Decimal
     count: int
+    is_shared: bool
 
 
 # ── Period helpers ─────────────────────────────────────────────────────────────
@@ -105,6 +106,7 @@ class StatsService:
             select(
                 Category.emoji,
                 Category.name,
+                Transaction.is_shared,
                 func.sum(Transaction.amount).label("total"),
                 func.count(Transaction.id).label("count"),
             )
@@ -114,10 +116,16 @@ class StatsService:
                 Transaction.created_at >= date_from,
                 Transaction.created_at < date_to,
             )
-            .group_by(Category.id, Category.emoji, Category.name)
-            .order_by(func.sum(Transaction.amount).desc())
+            .group_by(Category.id, Category.emoji, Category.name, Transaction.is_shared)
+            .order_by(Transaction.is_shared, func.sum(Transaction.amount).desc())
         )
         return [
-            CategoryStats(emoji=row.emoji, name=row.name, total=row.total, count=row.count)
+            CategoryStats(
+                emoji=row.emoji,
+                name=row.name,
+                total=row.total,
+                count=row.count,
+                is_shared=row.is_shared,
+            )
             for row in result.all()
         ]
