@@ -2,7 +2,6 @@ import asyncio
 
 from app.bot import create_bot, create_dispatcher, set_bot_commands
 from app.config import get_settings
-from app.db.init_db import init_db
 from app.db.session import create_engine, create_session_factory
 from app.handlers import register_handlers
 
@@ -12,8 +11,6 @@ async def main() -> None:
 
     engine = create_engine(settings.db_url)
     session_factory = create_session_factory(engine)
-
-    await init_db(engine)
 
     bot = create_bot(settings.bot_token)
     dp = create_dispatcher()
