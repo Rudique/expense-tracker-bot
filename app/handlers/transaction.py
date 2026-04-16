@@ -1,5 +1,4 @@
 from decimal import Decimal, InvalidOperation
-from typing import Optional
 
 from aiogram import Router
 from aiogram.enums import ChatType
@@ -9,10 +8,10 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.fsm.transaction import AddTransaction, CategoryCallback, NavCallback
+from app.helpers.message import delete_message, edit_message
+from app.helpers.transaction import save_transaction
 from app.keyboards.transaction import cancel_kb, category_kb, comment_kb, confirm_kb
-from app.models.transaction import Transaction
 from app.services.category_service import CategoryService
-from app.services.transaction_service import TransactionService
 from app.services.user_service import UserService
 from app.texts.transaction import (
     amount_invalid,
@@ -63,9 +62,9 @@ async def process_amount(
         if amount <= 0:
             raise ValueError
     except (InvalidOperation, ValueError):
-        await _delete(message)
+        await delete_message(message)
         data = await state.get_data()
-        await _edit(message, data["prompt_msg_id"], amount_invalid(), cancel_kb())
+        await edit_message(message, data["prompt_msg_id"], amount_invalid(), cancel_kb())
         return
 
     async with session_factory() as session:
@@ -76,14 +75,14 @@ async def process_amount(
         await message.answer(no_categories_text())
         return
 
-    await _delete(message)
+    await delete_message(message)
     data = await state.get_data()
     await state.update_data(amount=str(amount))
     await state.set_state(AddTransaction.waiting_category)
 
     text = category_prompt(str(amount))
     kb = category_kb(categories)
-    if not await _edit(message, data["prompt_msg_id"], text, kb):
+    if not await edit_message(message, data["prompt_msg_id"], text, kb):
         sent = await message.answer(text, reply_markup=kb)
         await state.update_data(prompt_msg_id=sent.message_id)
 
@@ -111,14 +110,14 @@ async def process_comment(
     message: Message,
     state: FSMContext,
 ) -> None:
-    await _delete(message)
+    await delete_message(message)
     data = await state.get_data()
     comment = message.text.strip()
     await state.update_data(comment=comment)
     await state.set_state(AddTransaction.waiting_confirmation)
 
     text = confirm_text(data["amount"], data["category_label"], comment)
-    if not await _edit(message, data["prompt_msg_id"], text, confirm_kb()):
+    if not await edit_message(message, data["prompt_msg_id"], text, confirm_kb()):
         sent = await message.answer(text, reply_markup=confirm_kb())
         await state.update_data(prompt_msg_id=sent.message_id)
 
@@ -176,45 +175,7 @@ async def on_nav(
     elif action == "save":
         if current_state == AddTransaction.waiting_confirmation:
             data = await state.get_data()
-            transaction = await _save(session_factory, data, comment=data.get("comment"))
+            transaction = await save_transaction(session_factory, data, comment=data.get("comment"))
             await state.clear()
             await callback.message.edit_text(success_text(transaction, data["category_label"]))
 
-
-# ── Helpers ────────────────────────────────────────────────────────────────────
-
-async def _save(
-    session_factory: async_sessionmaker[AsyncSession],
-    data: dict,
-    comment: Optional[str],
-) -> Transaction:
-    async with session_factory() as session:
-        transaction = await TransactionService.create(
-            session=session,
-            user_id=data["user_id"],
-            amount=Decimal(data["amount"]),
-            category_id=data["category_id"],
-            comment=comment,
-            is_shared=data["is_shared"],
-        )
-    return transaction
-
-
-async def _delete(message: Message) -> None:
-    try:
-        await message.delete()
-    except Exception:
-        pass
-
-
-async def _edit(message: Message, msg_id: int, text: str, reply_markup=None) -> bool:
-    try:
-        await message.bot.edit_message_text(
-            chat_id=message.chat.id,
-            message_id=msg_id,
-            text=text,
-            reply_markup=reply_markup,
-        )
-        return True
-    except Exception:
-        return False
