@@ -8,10 +8,10 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.fsm.transaction import AddTransaction, CategoryCallback, NavCallback
-from app.helpers.message import delete_message, edit_message
-from app.helpers.transaction import save_transaction
 from app.keyboards.transaction import cancel_kb, category_kb, comment_kb, confirm_kb
 from app.services.category_service import CategoryService
+from app.services.message_service import delete_message, edit_message
+from app.services.transaction_service import TransactionService
 from app.services.user_service import UserService
 from app.texts.transaction import (
     amount_invalid,
@@ -175,7 +175,15 @@ async def on_nav(
     elif action == "save":
         if current_state == AddTransaction.waiting_confirmation:
             data = await state.get_data()
-            transaction = await save_transaction(session_factory, data, comment=data.get("comment"))
+            async with session_factory() as session:
+                transaction = await TransactionService.create(
+                    session=session,
+                    user_id=data["user_id"],
+                    amount=Decimal(data["amount"]),
+                    category_id=data["category_id"],
+                    comment=data.get("comment"),
+                    is_shared=data["is_shared"],
+                )
             await state.clear()
             await callback.message.edit_text(success_text(transaction, data["category_label"]))
 
