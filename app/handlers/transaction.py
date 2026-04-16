@@ -7,4 +7,4 @@ router = Router()
 
 @router.message(Command("add_transaction"))
 async def cmd_add_transaction(message: Message) -> None:
-    await message.answer("add_transaction — в разработке")
+    await message.answer("🚧 <b>Under construction</b>\n\nThis feature is coming soon!")

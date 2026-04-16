@@ -1,6 +1,6 @@
 import asyncio
 
-from app.bot import create_bot, create_dispatcher
+from app.bot import create_bot, create_dispatcher, set_bot_commands
 from app.config import get_settings
 from app.db.init_db import init_db
 from app.db.session import create_engine, create_session_factory
@@ -18,6 +18,8 @@ async def main() -> None:
     bot = create_bot(settings.bot_token)
     dp = create_dispatcher()
     register_handlers(dp)
+
+    await set_bot_commands(bot)
 
     await dp.start_polling(bot, session_factory=session_factory)
 
