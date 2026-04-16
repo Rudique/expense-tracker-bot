@@ -154,10 +154,20 @@ async def process_amount(
         if amount <= 0:
             raise ValueError
     except (InvalidOperation, ValueError):
-        await message.answer(
-            "⚠️ Please enter a valid positive number.\n\nExample: <b>1500</b> or <b>9.99</b>",
-            reply_markup=_cancel_kb(),
-        )
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        data = await state.get_data()
+        try:
+            await message.bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=data["prompt_msg_id"],
+                text="⚠️ Please enter a valid positive number.\n\nExample: <b>1500</b> or <b>9.99</b>",
+                reply_markup=_cancel_kb(),
+            )
+        except Exception:
+            pass
         return
 
     async with session_factory() as session:
