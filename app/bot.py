@@ -18,7 +18,8 @@ def create_dispatcher() -> Dispatcher:
 async def set_bot_commands(bot: Bot) -> None:
     commands = [
         BotCommand(command="start",           description="Start the bot"),
-        BotCommand(command="add_transaction", description="Add a new transaction 🚧"),
+        BotCommand(command="add_transaction", description="Add a new transaction"),
+        BotCommand(command="my_stats",        description="View your spending by period"),
         BotCommand(command="categories",      description="View all categories"),
         BotCommand(command="add_category",    description="Add a new category"),
     ]
