@@ -8,7 +8,11 @@ from app.services.category_service import CategoryService
 
 router = Router()
 
-USAGE = "Использование: /add_category [emoji] [название]\nПример: /add_category 🍕 Еда"
+USAGE = (
+    "📋 <b>Add a new category</b>\n\n"
+    "Usage: /add_category [emoji] [name]\n"
+    "Example: /add_category 🍕 Fast Food"
+)
 
 
 @router.message(Command("add_category"))
@@ -31,4 +35,23 @@ async def cmd_add_category(
     async with session_factory() as session:
         category = await CategoryService.create(session=session, emoji=emoji, name=name)
 
-    await message.answer(f"Категория добавлена: {category.emoji} {category.name}")
+    await message.answer(
+        f"✅ Category added!\n\n"
+        f"{category.emoji} <b>{category.name}</b>"
+    )
+
+
+@router.message(Command("categories"))
+async def cmd_categories(
+    message: Message,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        categories = await CategoryService.get_all(session=session)
+
+    if not categories:
+        await message.answer("📭 No categories yet.\n\nAdd one with /add_category")
+        return
+
+    lines = "\n".join(f"{c.emoji} {c.name}" for c in categories)
+    await message.answer(f"📋 <b>Your categories</b>\n\n{lines}")
