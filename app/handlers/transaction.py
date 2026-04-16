@@ -27,6 +27,7 @@ class AddTransaction(StatesGroup):
     waiting_amount = State()
     waiting_category = State()
     waiting_comment = State()
+    waiting_confirmation = State()
 
 
 class CategoryCallback(CallbackData, prefix="txn_cat"):
@@ -36,7 +37,7 @@ class CategoryCallback(CallbackData, prefix="txn_cat"):
 
 
 class NavCallback(CallbackData, prefix="txn_nav"):
-    action: str  # cancel | back | skip
+    action: str  # cancel | back | skip | save
 
 
 # ── Keyboards ──────────────────────────────────────────────────────────────────
@@ -70,6 +71,49 @@ def _comment_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="❌ Cancel", callback_data=NavCallback(action="cancel").pack()),
         ],
     ])
+
+
+def _confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💾 Save", callback_data=NavCallback(action="save").pack())],
+        [InlineKeyboardButton(text="← Back", callback_data=NavCallback(action="back").pack())],
+        [InlineKeyboardButton(text="❌ Cancel", callback_data=NavCallback(action="cancel").pack())],
+    ])
+
+
+# ── Text builders ──────────────────────────────────────────────────────────────
+
+def _category_prompt(amount: str) -> str:
+    return f"💰 Amount: <b>{amount}</b>\n\n📂 <b>Select a category:</b>"
+
+
+def _comment_prompt(amount: str, category_label: str) -> str:
+    return (
+        f"💰 Amount: <b>{amount}</b>\n"
+        f"📂 Category: <b>{category_label}</b>\n\n"
+        "💬 <b>Add a comment:</b>"
+    )
+
+
+def _confirm_text(amount: str, category_label: str, comment: Optional[str]) -> str:
+    lines = [
+        f"💰 Amount: <b>{amount}</b>",
+        f"📂 Category: <b>{category_label}</b>",
+    ]
+    if comment:
+        lines.append(f"💬 Comment: <b>{comment}</b>")
+    lines.append("\nReady to save?")
+    return "\n".join(lines)
+
+
+def _success_text(transaction: Transaction, category_label: str) -> str:
+    comment_line = f"\n💬 {transaction.comment}" if transaction.comment else ""
+    return (
+        f"✅ <b>Transaction saved!</b>\n\n"
+        f"💰 Amount: <b>{transaction.amount}</b>\n"
+        f"📂 Category: <b>{category_label}</b>"
+        f"{comment_line}"
+    )
 
 
 # ── Step 1: amount ─────────────────────────────────────────────────────────────
@@ -124,11 +168,16 @@ async def process_amount(
         await message.answer("📭 You have no categories yet.\n\nAdd one first with /add_category")
         return
 
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
     data = await state.get_data()
     await state.update_data(amount=str(amount))
     await state.set_state(AddTransaction.waiting_category)
 
-    text = "📂 <b>Select a category:</b>"
+    text = _category_prompt(str(amount))
     kb = _category_kb(categories)
     try:
         await message.bot.edit_message_text(
@@ -150,14 +199,12 @@ async def process_category(
     callback_data: CategoryCallback,
     state: FSMContext,
 ) -> None:
-    await state.update_data(
-        category_id=callback_data.id,
-        category_label=f"{callback_data.emoji} {callback_data.name}",
-    )
+    data = await state.get_data()
+    category_label = f"{callback_data.emoji} {callback_data.name}"
+    await state.update_data(category_id=callback_data.id, category_label=category_label)
     await state.set_state(AddTransaction.waiting_comment)
     await callback.message.edit_text(
-        f"📂 Category: <b>{callback_data.emoji} {callback_data.name}</b>\n\n"
-        "💬 <b>Add a comment:</b>",
+        _comment_prompt(data["amount"], category_label),
         reply_markup=_comment_kb(),
     )
     await callback.answer()
@@ -169,21 +216,28 @@ async def process_category(
 async def process_comment(
     message: Message,
     state: FSMContext,
-    session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    data = await state.get_data()
-    transaction = await _save(session_factory, data, comment=message.text.strip())
-    await state.clear()
+    try:
+        await message.delete()
+    except Exception:
+        pass
 
-    text = _success_text(transaction, data["category_label"])
+    data = await state.get_data()
+    comment = message.text.strip()
+    await state.update_data(comment=comment)
+    await state.set_state(AddTransaction.waiting_confirmation)
+
+    text = _confirm_text(data["amount"], data["category_label"], comment)
     try:
         await message.bot.edit_message_text(
             chat_id=message.chat.id,
             message_id=data["prompt_msg_id"],
             text=text,
+            reply_markup=_confirm_kb(),
         )
     except Exception:
-        await message.answer(text)
+        sent = await message.answer(text, reply_markup=_confirm_kb())
+        await state.update_data(prompt_msg_id=sent.message_id)
 
 
 # ── Navigation ─────────────────────────────────────────────────────────────────
@@ -195,7 +249,7 @@ async def on_nav(
     state: FSMContext,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    await callback.answer()  # always first — stops the button spinner
+    await callback.answer()
 
     action = callback_data.action
     current_state = await state.get_state()
@@ -207,27 +261,49 @@ async def on_nav(
         await callback.message.edit_text("❌ <b>Transaction cancelled.</b>")
 
     elif action == "back":
+        data = await state.get_data()
+
         if current_state == AddTransaction.waiting_category:
             await state.set_state(AddTransaction.waiting_amount)
             await callback.message.edit_text(
                 "💰 <b>How much did you spend?</b>\n\nEnter the amount:",
                 reply_markup=_cancel_kb(),
             )
+
         elif current_state == AddTransaction.waiting_comment:
             async with session_factory() as session:
                 categories = await CategoryService.get_all(session=session)
             await state.set_state(AddTransaction.waiting_category)
             await callback.message.edit_text(
-                "📂 <b>Select a category:</b>",
+                _category_prompt(data["amount"]),
                 reply_markup=_category_kb(categories),
+            )
+
+        elif current_state == AddTransaction.waiting_confirmation:
+            await state.set_state(AddTransaction.waiting_comment)
+            await callback.message.edit_text(
+                _comment_prompt(data["amount"], data["category_label"]),
+                reply_markup=_comment_kb(),
             )
 
     elif action == "skip":
         if current_state == AddTransaction.waiting_comment:
             data = await state.get_data()
-            transaction = await _save(session_factory, data, comment=None)
+            await state.update_data(comment=None)
+            await state.set_state(AddTransaction.waiting_confirmation)
+            await callback.message.edit_text(
+                _confirm_text(data["amount"], data["category_label"], None),
+                reply_markup=_confirm_kb(),
+            )
+
+    elif action == "save":
+        if current_state == AddTransaction.waiting_confirmation:
+            data = await state.get_data()
+            transaction = await _save(session_factory, data, comment=data.get("comment"))
             await state.clear()
-            await callback.message.edit_text(_success_text(transaction, data["category_label"]))
+            await callback.message.edit_text(
+                _success_text(transaction, data["category_label"])
+            )
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -247,13 +323,3 @@ async def _save(
             is_shared=data["is_shared"],
         )
     return transaction
-
-
-def _success_text(transaction, category_label: str) -> str:
-    comment_line = f"\n💬 {transaction.comment}" if transaction.comment else ""
-    return (
-        f"✅ <b>Transaction saved!</b>\n\n"
-        f"💰 Amount: <b>{transaction.amount}</b>\n"
-        f"📂 Category: <b>{category_label}</b>"
-        f"{comment_line}"
-    )
