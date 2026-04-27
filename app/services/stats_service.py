@@ -7,10 +7,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.category import Category
 from app.models.transaction import Transaction
+from app.models.user import User
 
 
 @dataclass
 class CategoryStats:
+    emoji: str
+    name: str
+    total: Decimal
+    count: int
+    is_shared: bool
+
+
+@dataclass
+class UserCategoryStats:
+    user_id: int
+    username: str | None
+    first_name: str | None
     emoji: str
     name: str
     total: Decimal
@@ -121,6 +134,50 @@ class StatsService:
         )
         return [
             CategoryStats(
+                emoji=row.emoji,
+                name=row.name,
+                total=row.total,
+                count=row.count,
+                is_shared=row.is_shared,
+            )
+            for row in result.all()
+        ]
+
+    @staticmethod
+    async def get_all_by_period(
+        session: AsyncSession,
+        date_from: datetime,
+        date_to: datetime,
+    ) -> list[UserCategoryStats]:
+        result = await session.execute(
+            select(
+                User.id.label("user_id"),
+                User.username,
+                User.first_name,
+                Category.emoji,
+                Category.name,
+                Transaction.is_shared,
+                func.sum(Transaction.amount).label("total"),
+                func.count(Transaction.id).label("count"),
+            )
+            .join(Category, Transaction.category_id == Category.id)
+            .join(User, Transaction.user_id == User.id)
+            .where(
+                Transaction.created_at >= date_from,
+                Transaction.created_at < date_to,
+            )
+            .group_by(
+                User.id, User.username, User.first_name,
+                Category.id, Category.emoji, Category.name,
+                Transaction.is_shared,
+            )
+            .order_by(Transaction.is_shared, User.id, func.sum(Transaction.amount).desc())
+        )
+        return [
+            UserCategoryStats(
+                user_id=row.user_id,
+                username=row.username,
+                first_name=row.first_name,
                 emoji=row.emoji,
                 name=row.name,
                 total=row.total,
