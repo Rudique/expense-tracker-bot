@@ -23,5 +23,7 @@ async def set_bot_commands(bot: Bot) -> None:
         BotCommand(command="categories",      description="View all categories"),
         BotCommand(command="add_category",    description="Add a new category"),
         BotCommand(command="group_stats",     description="View spending for all users"),
+        BotCommand(command="add_reminder",       description="Set up a reminder"),
+        BotCommand(command="set_reminders_topic", description="Link this topic for reminders (run inside topic)"),
     ]
     await bot.set_my_commands(commands)
