@@ -12,6 +12,7 @@ class Settings:
     db_url: str
     log_level: str = "INFO"
     log_format: str = "json"  # json | pretty
+    timezone: str = "UTC"
 
 
 def get_settings() -> Settings:
@@ -26,4 +27,5 @@ def get_settings() -> Settings:
         db_url=db_url,
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         log_format=os.getenv("LOG_FORMAT", "json"),
+        timezone=os.getenv("TIMEZONE", "UTC"),
     )

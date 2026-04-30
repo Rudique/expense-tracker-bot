@@ -8,25 +8,28 @@ from apscheduler.triggers.date import DateTrigger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.config import get_settings
 from app.models.reminder import Reminder
 
-scheduler = AsyncIOScheduler()
+_settings = get_settings()
+scheduler = AsyncIOScheduler(timezone=_settings.timezone)
 logger = structlog.get_logger()
 
 
 def _trigger(reminder: Reminder):
+    tz = _settings.timezone
     hour, minute = map(int, reminder.send_time.split(":"))
     if reminder.schedule_type == "daily":
-        return CronTrigger(hour=hour, minute=minute)
+        return CronTrigger(hour=hour, minute=minute, timezone=tz)
     if reminder.schedule_type == "weekly":
-        return CronTrigger(day_of_week=int(reminder.schedule_value), hour=hour, minute=minute)
+        return CronTrigger(day_of_week=int(reminder.schedule_value), hour=hour, minute=minute, timezone=tz)
     if reminder.schedule_type == "monthly":
-        return CronTrigger(day=int(reminder.schedule_value), hour=hour, minute=minute)
+        return CronTrigger(day=int(reminder.schedule_value), hour=hour, minute=minute, timezone=tz)
     if reminder.schedule_type == "once":
         run_date = datetime.strptime(
             f"{reminder.schedule_value} {reminder.send_time}", "%Y-%m-%d %H:%M"
         )
-        return DateTrigger(run_date=run_date)
+        return DateTrigger(run_date=run_date, timezone=tz)
 
 
 async def _fire(
