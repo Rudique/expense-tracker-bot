@@ -94,3 +94,32 @@ def success_text(title: str, sched: str, send_time: str, target_label: str) -> s
 
 def cancelled_text() -> str:
     return "❌ <b>Cancelled.</b>"
+
+
+def my_reminders_text(count: int) -> str:
+    if count == 0:
+        return "🔔 <b>Your reminders</b>\n\nNo active reminders.\nUse /add_reminder to create one."
+    return "🔔 <b>Your reminders</b>\n\nTap a reminder to manage it:"
+
+
+def reminder_detail_text(title: str, sched: str, send_time: str, target_label: str) -> str:
+    return (
+        f"🔔 <b>{title}</b>\n\n"
+        f"📅 {sched}\n"
+        f"⏰ {send_time}\n"
+        f"📨 {target_label}"
+    )
+
+
+def reminder_deleted_text(title: str) -> str:
+    return f"🗑 <b>Deleted:</b> {title}"
+
+
+def updated_text(title: str, sched: str, send_time: str, target_label: str) -> str:
+    return (
+        f"✅ <b>Reminder updated!</b>\n\n"
+        f"🔔 {title}\n"
+        f"📅 {sched}\n"
+        f"⏰ {send_time}\n"
+        f"📨 {target_label}"
+    )

@@ -78,6 +78,12 @@ def register_reminder(bot: Bot, session_factory: async_sessionmaker, reminder: R
     )
 
 
+def unregister_reminder(reminder_id: int) -> None:
+    job_id = f"reminder_{reminder_id}"
+    if scheduler.get_job(job_id):
+        scheduler.remove_job(job_id)
+
+
 async def load_all_reminders(bot: Bot, session_factory: async_sessionmaker) -> None:
     from app.services.reminder_service import ReminderService
     async with session_factory() as session:

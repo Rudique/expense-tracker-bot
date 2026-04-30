@@ -6,6 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.fsm.reminder import (
     AddReminder,
+    ReminderActionCallback,
+    ReminderListCallback,
     ReminderNavCallback,
     ReminderScheduleCallback,
     ReminderTargetCallback,
@@ -15,14 +17,17 @@ from app.fsm.reminder import (
 from app.keyboards.reminder import (
     back_cancel_kb,
     cancel_kb,
+    confirm_delete_kb,
     confirm_kb,
     monthly_day_kb,
+    reminder_detail_kb,
+    reminder_list_kb,
     schedule_type_kb,
     target_kb,
     time_kb,
     weekly_day_kb,
 )
-from app.scheduler import register_reminder
+from app.scheduler import register_reminder, unregister_reminder
 from app.services.group_service import GroupService
 from app.services.message_service import delete_message, edit_message
 from app.services.reminder_service import ReminderService
@@ -31,8 +36,11 @@ from app.texts.reminder import (
     cancelled_text,
     confirm_text,
     monthly_day_prompt,
+    my_reminders_text,
     once_date_invalid,
     once_date_prompt,
+    reminder_deleted_text,
+    reminder_detail_text,
     schedule_label,
     schedule_type_prompt,
     success_text,
@@ -41,6 +49,7 @@ from app.texts.reminder import (
     time_invalid,
     time_prompt,
     title_prompt,
+    updated_text,
     weekly_day_prompt,
 )
 
@@ -315,24 +324,164 @@ async def on_nav(
             await _show_target_step(callback.message, state, session_factory)
 
     elif action == "save" and current == AddReminder.waiting_confirmation:
-        async with session_factory() as session:
-            reminder = await ReminderService.create(
-                session=session,
-                user_id=data["user_id"],
-                telegram_user_id=data["telegram_user_id"],
-                title=data["title"],
-                schedule_type=data["schedule_type"],
-                schedule_value=data.get("schedule_value"),
-                send_time=data["send_time"],
-                target=data["target"],
-                chat_id=data.get("target_chat_id"),
-                thread_id=data.get("target_thread_id"),
-            )
-        register_reminder(callback.bot, session_factory, reminder)
-        await state.clear()
+        editing_id = data.get("editing_reminder_id")
         sched = schedule_label(data["schedule_type"], data.get("schedule_value"))
+        async with session_factory() as session:
+            if editing_id:
+                unregister_reminder(editing_id)
+                reminder = await ReminderService.update(
+                    session=session,
+                    reminder_id=editing_id,
+                    title=data["title"],
+                    schedule_type=data["schedule_type"],
+                    schedule_value=data.get("schedule_value"),
+                    send_time=data["send_time"],
+                    target=data["target"],
+                    chat_id=data.get("target_chat_id"),
+                    thread_id=data.get("target_thread_id"),
+                )
+                register_reminder(callback.bot, session_factory, reminder)
+                await state.clear()
+                await callback.message.edit_text(
+                    updated_text(data["title"], sched, data["send_time"], data["target_label"])
+                )
+            else:
+                reminder = await ReminderService.create(
+                    session=session,
+                    user_id=data["user_id"],
+                    telegram_user_id=data["telegram_user_id"],
+                    title=data["title"],
+                    schedule_type=data["schedule_type"],
+                    schedule_value=data.get("schedule_value"),
+                    send_time=data["send_time"],
+                    target=data["target"],
+                    chat_id=data.get("target_chat_id"),
+                    thread_id=data.get("target_thread_id"),
+                )
+                register_reminder(callback.bot, session_factory, reminder)
+                await state.clear()
+                await callback.message.edit_text(
+                    success_text(data["title"], sched, data["send_time"], data["target_label"])
+                )
+
+
+# ── /my_reminders ──────────────────────────────────────────────────────────────
+
+@router.message(Command("my_reminders"))
+async def cmd_my_reminders(
+    message: Message,
+    state: FSMContext,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await state.clear()
+    async with session_factory() as session:
+        user = await UserService.get_or_create(session, message.from_user)
+        reminders = await ReminderService.get_by_user(session, user.id)
+    await message.answer(
+        my_reminders_text(len(reminders)),
+        reply_markup=reminder_list_kb(reminders) if reminders else None,
+    )
+
+
+@router.callback_query(ReminderListCallback.filter())
+async def on_reminder_select(
+    callback: CallbackQuery,
+    callback_data: ReminderListCallback,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await callback.answer()
+    async with session_factory() as session:
+        reminder = await ReminderService.get_by_id(session, callback_data.reminder_id)
+    if not reminder:
+        await callback.message.edit_text("⚠️ Reminder not found.")
+        return
+    sched = schedule_label(reminder.schedule_type, reminder.schedule_value)
+    target_label = "💬 Private chat" if reminder.target == "private" else "📣 Group/Reminders"
+    await callback.message.edit_text(
+        reminder_detail_text(reminder.title, sched, reminder.send_time, target_label),
+        reply_markup=reminder_detail_kb(reminder.id),
+    )
+
+
+@router.callback_query(ReminderActionCallback.filter())
+async def on_reminder_action(
+    callback: CallbackQuery,
+    callback_data: ReminderActionCallback,
+    state: FSMContext,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await callback.answer()
+    action = callback_data.action
+    reminder_id = callback_data.reminder_id
+
+    if action == "back_to_list":
+        async with session_factory() as session:
+            user = await UserService.get_or_create(session, callback.from_user)
+            reminders = await ReminderService.get_by_user(session, user.id)
         await callback.message.edit_text(
-            success_text(data["title"], sched, data["send_time"], data["target_label"])
+            my_reminders_text(len(reminders)),
+            reply_markup=reminder_list_kb(reminders) if reminders else None,
+        )
+
+    elif action == "detail":
+        async with session_factory() as session:
+            reminder = await ReminderService.get_by_id(session, reminder_id)
+        if not reminder:
+            await callback.message.edit_text("⚠️ Reminder not found.")
+            return
+        sched = schedule_label(reminder.schedule_type, reminder.schedule_value)
+        target_label = "💬 Private chat" if reminder.target == "private" else "📣 Group/Reminders"
+        await callback.message.edit_text(
+            reminder_detail_text(reminder.title, sched, reminder.send_time, target_label),
+            reply_markup=reminder_detail_kb(reminder.id),
+        )
+
+    elif action == "delete":
+        async with session_factory() as session:
+            reminder = await ReminderService.get_by_id(session, reminder_id)
+        if not reminder:
+            await callback.message.edit_text("⚠️ Reminder not found.")
+            return
+        await callback.message.edit_text(
+            f"🗑 Delete <b>{reminder.title}</b>?\n\nThis cannot be undone.",
+            reply_markup=confirm_delete_kb(reminder_id),
+        )
+
+    elif action == "confirm_delete":
+        async with session_factory() as session:
+            reminder = await ReminderService.get_by_id(session, reminder_id)
+            title = reminder.title if reminder else "Reminder"
+            await ReminderService.delete(session, reminder_id)
+        unregister_reminder(reminder_id)
+        await callback.message.edit_text(reminder_deleted_text(title))
+
+    elif action == "edit":
+        async with session_factory() as session:
+            reminder = await ReminderService.get_by_id(session, reminder_id)
+            user = await UserService.get_or_create(session, callback.from_user)
+        if not reminder:
+            await callback.message.edit_text("⚠️ Reminder not found.")
+            return
+        target_label = "💬 Private chat" if reminder.target == "private" else "📣 Group/Reminders"
+        sched = schedule_label(reminder.schedule_type, reminder.schedule_value)
+        await state.update_data(
+            editing_reminder_id=reminder.id,
+            prompt_msg_id=callback.message.message_id,
+            user_id=user.id,
+            telegram_user_id=reminder.telegram_user_id,
+            title=reminder.title,
+            schedule_type=reminder.schedule_type,
+            schedule_value=reminder.schedule_value,
+            send_time=reminder.send_time,
+            target=reminder.target,
+            target_chat_id=reminder.chat_id,
+            target_thread_id=reminder.thread_id,
+            target_label=target_label,
+        )
+        await state.set_state(AddReminder.waiting_confirmation)
+        await callback.message.edit_text(
+            confirm_text(reminder.title, sched, reminder.send_time, target_label),
+            reply_markup=confirm_kb(),
         )
 
 

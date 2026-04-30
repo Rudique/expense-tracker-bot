@@ -1,6 +1,8 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.fsm.reminder import (
+    ReminderActionCallback,
+    ReminderListCallback,
     ReminderNavCallback,
     ReminderScheduleCallback,
     ReminderTargetCallback,
@@ -105,4 +107,40 @@ def confirm_kb() -> InlineKeyboardMarkup:
         [_nav("💾 Save", "save")],
         _back(),
         _cancel(),
+    ])
+
+
+def reminder_list_kb(reminders: list) -> InlineKeyboardMarkup:
+    from app.texts.reminder import schedule_label
+    rows = []
+    for r in reminders:
+        sched = schedule_label(r.schedule_type, r.schedule_value)
+        rows.append([InlineKeyboardButton(
+            text=f"🔔 {r.title} · {sched} · {r.send_time}",
+            callback_data=ReminderListCallback(reminder_id=r.id).pack(),
+        )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def reminder_detail_kb(reminder_id: int) -> InlineKeyboardMarkup:
+    def act(text: str, action: str) -> InlineKeyboardButton:
+        return InlineKeyboardButton(
+            text=text,
+            callback_data=ReminderActionCallback(action=action, reminder_id=reminder_id).pack(),
+        )
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [act("✏️ Edit", "edit"), act("🗑 Delete", "delete")],
+        [act("← Back", "back_to_list")],
+    ])
+
+
+def confirm_delete_kb(reminder_id: int) -> InlineKeyboardMarkup:
+    def act(text: str, action: str) -> InlineKeyboardButton:
+        return InlineKeyboardButton(
+            text=text,
+            callback_data=ReminderActionCallback(action=action, reminder_id=reminder_id).pack(),
+        )
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [act("✅ Yes, delete", "confirm_delete")],
+        [act("← Back", "detail")],
     ])

@@ -30,3 +30,12 @@ class ReminderTimeCallback(CallbackData, prefix="rem_time"):
 class ReminderTargetCallback(CallbackData, prefix="rem_tgt"):
     target: str   # private | group
     chat_id: int = 0
+
+
+class ReminderListCallback(CallbackData, prefix="rem_ls"):
+    reminder_id: int
+
+
+class ReminderActionCallback(CallbackData, prefix="rem_act"):
+    action: str        # edit | delete | confirm_delete | detail | back_to_list
+    reminder_id: int
