@@ -1,11 +1,14 @@
 from decimal import Decimal, InvalidOperation
 
+import structlog
 from aiogram import Router
 from aiogram.enums import ChatType
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+logger = structlog.get_logger()
 
 from app.fsm.transaction import AddTransaction, CategoryCallback, NavCallback
 from app.keyboards.transaction import cancel_kb, category_kb, comment_kb, confirm_kb
@@ -184,6 +187,13 @@ async def on_nav(
                     comment=data.get("comment"),
                     is_shared=data["is_shared"],
                 )
+            logger.info(
+                "transaction_created",
+                transaction_id=transaction.id,
+                amount=str(data["amount"]),
+                category=data["category_label"],
+                is_shared=data["is_shared"],
+            )
             await state.clear()
             await callback.message.edit_text(success_text(transaction, data["category_label"]))
 

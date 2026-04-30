@@ -1,5 +1,6 @@
 from datetime import datetime
 
+import structlog
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.models.reminder import Reminder
 
 scheduler = AsyncIOScheduler()
+logger = structlog.get_logger()
 
 
 def _trigger(reminder: Reminder):
@@ -35,6 +37,7 @@ async def _fire(
     reminder_id: int,
     session_factory: async_sessionmaker,
 ) -> None:
+    logger.info("reminder_fired", reminder_id=reminder_id, title=title)
     try:
         await bot.send_message(
             chat_id=chat_id,
@@ -43,15 +46,15 @@ async def _fire(
             parse_mode="HTML",
         )
     except Exception:
-        pass
+        logger.exception("reminder_send_failed", reminder_id=reminder_id)
 
-    # Deactivate one-time reminders after firing
     async with session_factory() as session:
         result = await session.execute(select(Reminder).where(Reminder.id == reminder_id))
         reminder = result.scalar_one_or_none()
         if reminder and reminder.schedule_type == "once":
             reminder.is_active = False
             await session.commit()
+            logger.info("reminder_deactivated", reminder_id=reminder_id)
 
 
 def register_reminder(bot: Bot, session_factory: async_sessionmaker, reminder: Reminder) -> None:
@@ -76,15 +79,23 @@ def register_reminder(bot: Bot, session_factory: async_sessionmaker, reminder: R
         id=f"reminder_{reminder.id}",
         replace_existing=True,
     )
+    logger.info(
+        "reminder_registered",
+        reminder_id=reminder.id,
+        title=reminder.title,
+        schedule_type=reminder.schedule_type,
+        trigger=type(trigger).__name__,
+    )
 
 
 def unregister_reminder(reminder_id: int) -> None:
     job_id = f"reminder_{reminder_id}"
     if scheduler.get_job(job_id):
         scheduler.remove_job(job_id)
+        logger.info("reminder_unregistered", reminder_id=reminder_id)
 
 
-async def load_all_reminders(bot: Bot, session_factory: async_sessionmaker) -> None:
+async def load_all_reminders(bot: Bot, session_factory: async_sessionmaker) -> int:
     from app.services.reminder_service import ReminderService
     async with session_factory() as session:
         reminders = await ReminderService.get_active(session)
@@ -92,4 +103,5 @@ async def load_all_reminders(bot: Bot, session_factory: async_sessionmaker) -> N
         try:
             register_reminder(bot, session_factory, reminder)
         except Exception:
-            pass
+            logger.exception("reminder_load_failed", reminder_id=reminder.id)
+    return len(reminders)

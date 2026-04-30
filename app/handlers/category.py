@@ -1,8 +1,11 @@
+import structlog
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+logger = structlog.get_logger()
 
 from app.fsm.category import AddCategory, CatNavCallback
 from app.keyboards.category import cancel_kb, confirm_kb
@@ -70,6 +73,7 @@ async def on_nav(
             category = await CategoryService.create(
                 session=session, emoji=data["emoji"], name=data["name"]
             )
+        logger.info("category_created", category_id=category.id, emoji=data["emoji"], name=data["name"])
         await state.clear()
         await callback.message.edit_text(success_text(category.emoji, category.name))
 

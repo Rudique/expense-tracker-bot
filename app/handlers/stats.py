@@ -1,9 +1,12 @@
 from datetime import datetime
 
+import structlog
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+logger = structlog.get_logger()
 
 from app.fsm.stats import GroupPeriodCallback, PeriodCallback
 from app.keyboards.stats import back_to_periods_kb, group_back_to_periods_kb, group_period_kb, period_kb
@@ -45,6 +48,7 @@ async def on_period(
             date_to=date_to,
         )
 
+    logger.info("stats_viewed", period=period, rows=len(rows))
     await callback.message.edit_text(
         stats_text(PERIOD_LABELS[period], rows, date_from, date_to),
         reply_markup=back_to_periods_kb(),
@@ -80,6 +84,7 @@ async def on_group_period(
             date_to=date_to,
         )
 
+    logger.info("group_stats_viewed", period=period, rows=len(rows))
     await callback.message.edit_text(
         group_stats_text(PERIOD_LABELS[period], rows, date_from, date_to),
         reply_markup=group_back_to_periods_kb(),

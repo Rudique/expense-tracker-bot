@@ -10,6 +10,8 @@ load_dotenv()
 class Settings:
     bot_token: str
     db_url: str
+    log_level: str = "INFO"
+    log_format: str = "json"  # json | pretty
 
 
 def get_settings() -> Settings:
@@ -22,4 +24,6 @@ def get_settings() -> Settings:
     return Settings(
         bot_token=bot_token,
         db_url=db_url,
+        log_level=os.getenv("LOG_LEVEL", "INFO"),
+        log_format=os.getenv("LOG_FORMAT", "json"),
     )

@@ -1,8 +1,11 @@
+import structlog
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+logger = structlog.get_logger()
 
 from app.fsm.reminder import (
     AddReminder,
@@ -341,6 +344,14 @@ async def on_nav(
                     thread_id=data.get("target_thread_id"),
                 )
                 register_reminder(callback.bot, session_factory, reminder)
+                logger.info(
+                    "reminder_updated",
+                    reminder_id=editing_id,
+                    title=data["title"],
+                    schedule=sched,
+                    send_time=data["send_time"],
+                    target=data["target"],
+                )
                 await state.clear()
                 await callback.message.edit_text(
                     updated_text(data["title"], sched, data["send_time"], data["target_label"])
@@ -359,6 +370,14 @@ async def on_nav(
                     thread_id=data.get("target_thread_id"),
                 )
                 register_reminder(callback.bot, session_factory, reminder)
+                logger.info(
+                    "reminder_created",
+                    reminder_id=reminder.id,
+                    title=data["title"],
+                    schedule=sched,
+                    send_time=data["send_time"],
+                    target=data["target"],
+                )
                 await state.clear()
                 await callback.message.edit_text(
                     success_text(data["title"], sched, data["send_time"], data["target_label"])
@@ -453,6 +472,7 @@ async def on_reminder_action(
             title = reminder.title if reminder else "Reminder"
             await ReminderService.delete(session, reminder_id)
         unregister_reminder(reminder_id)
+        logger.info("reminder_deleted", reminder_id=reminder_id, title=title)
         await callback.message.edit_text(reminder_deleted_text(title))
 
     elif action == "edit":
