@@ -1,3 +1,6 @@
+import re
+from datetime import datetime
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,3 +41,30 @@ class ReminderService:
     async def get_active(session: AsyncSession) -> list[Reminder]:
         result = await session.execute(select(Reminder).where(Reminder.is_active == True))
         return list(result.scalars().all())
+
+    @staticmethod
+    def parse_date(text: str) -> str | None:
+        """Parse DD.MM.YYYY or YYYY-MM-DD → 'YYYY-MM-DD'. Returns None if invalid."""
+        m = re.fullmatch(r"(\d{1,2})\.(\d{1,2})\.(\d{4})", text.strip())
+        if m:
+            try:
+                return datetime(int(m.group(3)), int(m.group(2)), int(m.group(1))).strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+        m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", text.strip())
+        if m:
+            try:
+                return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+        return None
+
+    @staticmethod
+    def parse_time(text: str) -> str | None:
+        """Parse HH:MM → 'HH:MM'. Returns None if invalid."""
+        m = re.fullmatch(r"(\d{1,2}):(\d{2})", text.strip())
+        if m:
+            h, mm = int(m.group(1)), int(m.group(2))
+            if 0 <= h < 24 and 0 <= mm < 60:
+                return f"{h:02d}:{mm:02d}"
+        return None

@@ -1,3 +1,4 @@
+from aiogram.types import User as TgUser
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -5,6 +6,17 @@ from app.models.user import User
 
 
 class UserService:
+    @staticmethod
+    async def get_or_create(session: AsyncSession, tg_user: TgUser) -> User:
+        user, _ = await UserService.create_or_update_from_telegram(
+            session=session,
+            telegram_id=tg_user.id,
+            username=tg_user.username,
+            first_name=tg_user.first_name,
+            last_name=tg_user.last_name,
+        )
+        return user
+
     @staticmethod
     async def create_or_update_from_telegram(
         session: AsyncSession,

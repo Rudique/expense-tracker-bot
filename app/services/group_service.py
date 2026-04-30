@@ -38,6 +38,17 @@ class GroupService:
         return group.reminders_thread_id if group else None
 
     @staticmethod
+    async def resolve_group_target(
+        session: AsyncSession, chat_id: int
+    ) -> tuple[int | None, str]:
+        """Returns (thread_id, target_label). thread_id is None if Reminders topic not configured."""
+        result = await session.execute(select(Group).where(Group.chat_id == chat_id))
+        group = result.scalar_one_or_none()
+        thread_id = group.reminders_thread_id if group else None
+        title = group.title if group else f"Group {chat_id}"
+        return thread_id, f"📣 {title}/Reminders"
+
+    @staticmethod
     async def set_reminders_thread(
         session: AsyncSession, chat_id: int, thread_id: int
     ) -> None:

@@ -1,6 +1,3 @@
-import re
-from datetime import datetime
-
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -50,31 +47,6 @@ from app.texts.reminder import (
 router = Router()
 
 
-def _parse_date(text: str) -> str | None:
-    m = re.fullmatch(r"(\d{1,2})\.(\d{1,2})\.(\d{4})", text.strip())
-    if m:
-        try:
-            return datetime(int(m.group(3)), int(m.group(2)), int(m.group(1))).strftime("%Y-%m-%d")
-        except ValueError:
-            pass
-    m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", text.strip())
-    if m:
-        try:
-            return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).strftime("%Y-%m-%d")
-        except ValueError:
-            pass
-    return None
-
-
-def _parse_time(text: str) -> str | None:
-    m = re.fullmatch(r"(\d{1,2}):(\d{2})", text.strip())
-    if m:
-        h, mm = int(m.group(1)), int(m.group(2))
-        if 0 <= h < 24 and 0 <= mm < 60:
-            return f"{h:02d}:{mm:02d}"
-    return None
-
-
 async def _show_target_step(
     message,
     state: FSMContext,
@@ -99,15 +71,8 @@ async def cmd_add_reminder(
     state: FSMContext,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    tg = message.from_user
     async with session_factory() as session:
-        user, _ = await UserService.create_or_update_from_telegram(
-            session=session,
-            telegram_id=tg.id,
-            username=tg.username,
-            first_name=tg.first_name,
-            last_name=tg.last_name,
-        )
+        user = await UserService.get_or_create(session, message.from_user)
         await GroupService.register_from_message(session, message)
 
     await state.set_state(AddReminder.waiting_title)
@@ -115,7 +80,7 @@ async def cmd_add_reminder(
     await state.update_data(
         prompt_msg_id=sent.message_id,
         user_id=user.id,
-        telegram_user_id=tg.id,
+        telegram_user_id=message.from_user.id,
     )
 
 
@@ -150,8 +115,9 @@ async def process_schedule_type(
 
     if stype == "daily":
         await state.set_state(AddReminder.waiting_time)
-        sched = schedule_label(stype, None)
-        await callback.message.edit_text(time_prompt(data["title"], sched), reply_markup=time_kb())
+        await callback.message.edit_text(
+            time_prompt(data["title"], schedule_label(stype, None)), reply_markup=time_kb()
+        )
     elif stype == "weekly":
         await state.set_state(AddReminder.waiting_schedule_value)
         await callback.message.edit_text(weekly_day_prompt(data["title"]), reply_markup=weekly_day_kb())
@@ -175,7 +141,6 @@ async def process_schedule_value(
     data = await state.get_data()
     await state.update_data(schedule_value=callback_data.value)
     await state.set_state(AddReminder.waiting_time)
-
     sched = schedule_label(data["schedule_type"], callback_data.value)
     await callback.message.edit_text(time_prompt(data["title"], sched), reply_markup=time_kb())
 
@@ -184,7 +149,7 @@ async def process_schedule_value(
 async def process_once_date(message: Message, state: FSMContext) -> None:
     await delete_message(message)
     data = await state.get_data()
-    date_str = _parse_date(message.text)
+    date_str = ReminderService.parse_date(message.text)
 
     if not date_str:
         await edit_message(message, data["prompt_msg_id"], once_date_invalid(data["title"]), back_cancel_kb())
@@ -192,9 +157,7 @@ async def process_once_date(message: Message, state: FSMContext) -> None:
 
     await state.update_data(schedule_value=date_str)
     await state.set_state(AddReminder.waiting_time)
-
-    sched = schedule_label("once", date_str)
-    text = time_prompt(data["title"], sched)
+    text = time_prompt(data["title"], schedule_label("once", date_str))
     if not await edit_message(message, data["prompt_msg_id"], text, time_kb()):
         sent = await message.answer(text, reply_markup=time_kb())
         await state.update_data(prompt_msg_id=sent.message_id)
@@ -211,16 +174,15 @@ async def process_time_cb(
 ) -> None:
     await callback.answer()
     data = await state.get_data()
-    sched = schedule_label(data["schedule_type"], data.get("schedule_value"))
 
     if callback_data.time == "custom":
         await state.update_data(time_awaiting_custom=True)
+        sched = schedule_label(data["schedule_type"], data.get("schedule_value"))
         await callback.message.edit_text(
             time_custom_prompt(data["title"], sched), reply_markup=back_cancel_kb()
         )
         return
 
-    # Convert "0800" → "08:00"
     send_time = f"{callback_data.time[:2]}:{callback_data.time[2:]}"
     await state.update_data(send_time=send_time, time_awaiting_custom=False)
     await _show_target_step(callback.message, state, session_factory)
@@ -234,10 +196,10 @@ async def process_time_text(
 ) -> None:
     await delete_message(message)
     data = await state.get_data()
-    sched = schedule_label(data["schedule_type"], data.get("schedule_value"))
-    parsed = _parse_time(message.text)
+    parsed = ReminderService.parse_time(message.text)
 
     if not parsed:
+        sched = schedule_label(data["schedule_type"], data.get("schedule_value"))
         await edit_message(message, data["prompt_msg_id"], time_invalid(data["title"], sched), back_cancel_kb())
         return
 
@@ -245,6 +207,7 @@ async def process_time_text(
     async with session_factory() as session:
         groups = await GroupService.get_all(session)
     await state.set_state(AddReminder.waiting_target)
+    sched = schedule_label(data["schedule_type"], data.get("schedule_value"))
     text = target_prompt(data["title"], sched, parsed)
     if not await edit_message(message, data["prompt_msg_id"], text, target_kb(groups)):
         sent = await message.answer(text, reply_markup=target_kb(groups))
@@ -265,20 +228,15 @@ async def process_target(
 
     if callback_data.target == "group":
         async with session_factory() as session:
-            thread_id = await GroupService.get_reminders_thread(session, callback_data.chat_id)
-            groups = await GroupService.get_all(session)
-        group = next((g for g in groups if g.chat_id == callback_data.chat_id), None)
-        group_title = group.title if group else "Group"
-
+            thread_id, target_label = await GroupService.resolve_group_target(
+                session, callback_data.chat_id
+            )
         if thread_id is None:
             await callback.answer(
-                "⚠️ Reminders topic not set.\n"
-                "Run /set_reminders_topic inside the Reminders topic first.",
+                "⚠️ Reminders topic not set.\nRun /set_reminders_topic inside the topic first.",
                 show_alert=True,
             )
             return
-
-        target_label = f"👥 {group_title} — Reminders"
         await state.update_data(
             target="group_topic",
             target_chat_id=callback_data.chat_id,
@@ -331,16 +289,16 @@ async def on_nav(
             await callback.message.edit_text(schedule_type_prompt(data["title"]), reply_markup=schedule_type_kb())
 
         elif current == AddReminder.waiting_time:
+            stype = data["schedule_type"]
             if data.get("time_awaiting_custom"):
                 await state.update_data(time_awaiting_custom=False)
-                sched = schedule_label(data["schedule_type"], data.get("schedule_value"))
+                sched = schedule_label(stype, data.get("schedule_value"))
                 await callback.message.edit_text(time_prompt(data["title"], sched), reply_markup=time_kb())
-            elif data["schedule_type"] == "daily":
+            elif stype == "daily":
                 await state.set_state(AddReminder.waiting_schedule_type)
                 await callback.message.edit_text(schedule_type_prompt(data["title"]), reply_markup=schedule_type_kb())
             else:
                 await state.set_state(AddReminder.waiting_schedule_value)
-                stype = data["schedule_type"]
                 if stype == "weekly":
                     await callback.message.edit_text(weekly_day_prompt(data["title"]), reply_markup=weekly_day_kb())
                 elif stype == "monthly":
